@@ -1,5 +1,8 @@
 import os
 import sys
+
+import torch
+
 sys.path.append("../../")
 import ipdb
 import json
@@ -100,7 +103,10 @@ def data_vis(examples, parse=True):
         # Note to set 'tokenize_pretokenized' and 'tokenize_no_ssplit' as True.
         # 1. Sentences have been space-separated tokenkenized previously.
         # 2. Each sample is viewed as one and only one sentence.
-        nlp = stanza.Pipeline(lang='en', processors='tokenize,mwt,pos,lemma', tokenize_pretokenized=True, tokenize_no_ssplit=True)
+        proxies = {'http': 'http://127.0.0.1:7890', 'https': 'http://127.0.0.1:7890'}
+        # stanza.download('en', proxies=proxies)
+        device = torch.device("cuda:1")
+        nlp = stanza.Pipeline(device = device, proxies = proxies, lang='en', processors='tokenize,mwt,pos,lemma', tokenize_pretokenized=True, tokenize_no_ssplit=True)
 
     if isinstance(examples, dict):
         output_examples = defaultdict(list)

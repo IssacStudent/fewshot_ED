@@ -1,5 +1,5 @@
 import sys
-sys.path.append("/mnt/lustre/ybma/")
+sys.path.append("/workspace/wyn/")
 import logging
 
 import pickle
@@ -9,8 +9,8 @@ from collections import defaultdict, Counter
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 
-from fewshot_ED.utils import read_json, read_jsonlines
-from fewshot_ED.processor.sample import Event, Sent, SentFeatures, EventFeatures, SentDataset
+from utils import read_json, read_jsonlines
+from processor.sample import Event, Sent, SentFeatures, EventFeatures, SentDataset
 
 logger = logging.getLogger(__name__)                         
 

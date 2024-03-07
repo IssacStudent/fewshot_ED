@@ -1,5 +1,7 @@
 import os
 
+import wandb
+
 os.environ['MKL_SERVICE_FORCE_INTEL'] = "1"
 import json
 import argparse
@@ -106,10 +108,12 @@ def train(args, model, processor):
             with autocast():
                 outputs = model(**inputs)
                 ce_loss, tok_embeds, ce_logits = outputs[0], outputs[2], outputs[4]
+                # wandb.log({"ce_loss": ce_loss.item()})
         else:
             outputs = model(**inputs)
             ce_loss, tok_embeds, ce_logits = outputs[0], outputs[2], outputs[4]
         smooth_ce_loss += ce_loss.item() / args.logging_steps
+        # wandb.log({"smooth_ce_loss": smooth_ce_loss})
 
         cl_loss = torch.tensor([0.0], dtype=torch.float).to(args.device)
         if args.use_in_batch_cl:
@@ -130,21 +134,25 @@ def train(args, model, processor):
                 with autocast():
                     cl_outputs = model_cl(**inputs)
                     cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
+                    # wandb.log({"cl_loss": cl_loss.item()})
             else:
                 cl_outputs = model_cl(**inputs)
                 cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
             smooth_cl_loss += cl_loss.item() / args.logging_steps
+            # wandb.log({"smooth_cl_loss": smooth_cl_loss})
 
         if args.fp_16:
             with autocast():
                 loss = ce_loss + cl_loss
                 loss = loss / args.gradient_accumulation_steps
+                # wandb.log({"loss": loss.item()})
                 scaler.scale(loss).backward()
         else:
             loss = ce_loss + cl_loss
             loss = loss / args.gradient_accumulation_steps
             loss.backward()
         smooth_loss += loss.item() / args.logging_steps
+        # wandb.log({"smooth_loss": smooth_loss})
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             if args.fp_16:
@@ -182,12 +190,20 @@ def train(args, model, processor):
                     evaluate_crf(args, dev_knn_logits, dev_features, set_type="dev", viterbi_decoder=viterbi_decoder,
                                  crf_model=crf_model)
 
+            # wandb.log({"dev_micro_recall": dev_micro_recall})
+            # wandb.log({"dev_micro_precision": dev_micro_precision})
+            # wandb.log({"dev_micro_f1_knn": dev_micro_f1_knn})
+
             test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, test_knn_logits = \
                 evaluate_knn(args, model, test_features, train_features, processor, set_type="test")
             if args.crf_strategy != 'no-crf':
                 test_micro_recall, test_micro_precision, test_micro_f1_crf, test_gt_list, test_pred_list = \
                     evaluate_crf(args, test_knn_logits, test_features, set_type="test", viterbi_decoder=viterbi_decoder,
                                  crf_model=crf_model)
+
+            # wandb.log({"test_micro_recall": test_micro_recall})
+            # wandb.log({"test_micro_precision": test_micro_precision})
+            # wandb.log({"test_micro_f1_knn": test_micro_f1_knn})
 
             if args.crf_strategy != 'no-crf':
                 (dev_micro_f1, test_micro_f1) = (dev_micro_f1_crf, test_micro_f1_crf)
@@ -224,6 +240,7 @@ def train(args, model, processor):
         "dev_f1": best_f1_dev,
         "test_f1": related_f1_test,
     }
+    # wandb.log(res_record)
     with open(os.path.join(args.output_dir, "res.json"), 'w') as f:
         json.dump(res_record, f)
     tb_writer.close()
@@ -433,6 +450,10 @@ def inference(args, model, processor, output_name=None):
             except:
                 res_report['overall']['dev_knn'] = res
 
+    # wandb.log({"final_dev_micro_recall": dev_micro_recall})
+    # wandb.log({"final_dev_micro_precision": dev_micro_precision})
+    # wandb.log({"final_dev_micro_f1_knn": dev_micro_f1_knn})
+
     test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, test_knn_logits = \
         evaluate_knn(args, model, test_features, train_features, processor, set_type="test")
     if args.crf_strategy != 'no-crf':
@@ -449,6 +470,10 @@ def inference(args, model, processor, output_name=None):
                 res_report[event_type]['test_knn'] = res
             except:
                 res_report['overall']['test_knn'] = res
+
+    # wandb.log({"final_test_micro_recall": test_micro_recall})
+    # wandb.log({"final_test_micro_precision": test_micro_precision})
+    # wandb.log({"final_test_micro_f1_knn": test_micro_f1_knn})
 
     train_trigger_dict = processor.generate_trigger_dict(train_features, set_type="train", count=True)
     dev_trigger_dict = processor.generate_trigger_dict(dev_features, set_type="dev", count=True)
@@ -529,7 +554,7 @@ def main():
         args.model_name_or_path = ckpt_dir
         args.config_name = ckpt_dir
         logging.basicConfig(
-            format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s', \
+            format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
             datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO
         )
         logger.info("Training/evaluation parameters %s", args)
@@ -537,8 +562,7 @@ def main():
         if not os.path.exists(args.output_dir):
             os.makedirs(args.output_dir)
         logging.basicConfig(
-            filename=os.path.join(args.output_dir, "log.txt"), \
-            format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s', \
+            format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
             datefmt='%m/%d/%Y %H:%M:%S', level=logging.INFO
         )
         logger.info("Training/evaluation parameters %s", args)
@@ -576,4 +600,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # os.environ['LC_ALL'] = 'C.UTF-8'
+    # os.environ['LANG'] = 'C.UTF-8'
+    # wandb.init(
+        # set the wandb project where this run will be logged
+        # 名称为2shot加上时间，格式为yyyyMMddHHmm
+        # project="maven_10shot_t4"
+    # )
     main()
+    # wandb.finish()

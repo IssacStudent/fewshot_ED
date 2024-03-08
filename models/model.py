@@ -75,26 +75,6 @@ class EventDetectionModel(RobertaPreTrainedModel):
             tok_embeds = F.normalize(tok_embeds, p=2, dim=-1)
         assert(tok_embeds.dim()==2 and tok_embeds.size(1)==self.hidden_size)
 
-        if prototypes is not None:
-            prompt_embeds = self.compute_prompt_embeddings(prompt_input_ids, prompt_attention_mask, prompt_start_list, prompt_end_list) if self.label_feature_enhanced else None
-            if self.config.use_tapnet:
-                M = self.tapnet(
-                    prototypes, 
-                    use_normalize=self.use_normalize, 
-                    prompt_embeds=prompt_embeds, 
-                    label_feature_enhanced=self.label_feature_enhanced, 
-                    use_prototype_reference=self.label_feature_enhanced    # We only consider such setting: (1) Label-enhanced + prototype reference. (2) None
-                )
-                tok_embeds = tok_embeds@M
-                prototypes = prototypes@M
-            else:
-                if self.label_feature_enhanced:
-                    prototypes = 0.5*(prototypes + prompt_embeds) 
-            if self.use_normalize:
-                tok_embeds = F.normalize(tok_embeds, p=2, dim=-1)
-                prototypes = F.normalize(prototypes, p=2, dim=-1)
-                prompt_embeds = F.normalize(prompt_embeds, p=2, dim=-1) if self.label_feature_enhanced else None
-
         if compute_features_only:
             return tok_embeds
         else:
@@ -128,69 +108,6 @@ class EventDetectionModel(RobertaPreTrainedModel):
                     pred_probs = F.softmax(logits, dim=-1)
                 pred_labels = logits.max(dim=-1).indices
             return total_loss, pred_labels, tok_embeds, pred_probs, logits
-
-
-    def forward_proto(
-        self,
-        prototypes,
-        query_embeds,
-        query_labels,
-        start_list_list,
-        prompt_input_ids=None,
-        prompt_attention_mask=None, 
-        prompt_start_list=None,
-        prompt_end_list=None,
-    ):
-        prompt_embeds = self.compute_prompt_embeddings(
-            prompt_input_ids, 
-            prompt_attention_mask, 
-            prompt_start_list, prompt_end_list
-        ) if (self.label_feature_enhanced or self.label_score_enhanced) else None
-        if self.config.use_tapnet:
-            M = self.tapnet(
-                prototypes, 
-                use_normalize=self.use_normalize, 
-                prompt_embeds=prompt_embeds, 
-                label_feature_enhanced=self.label_feature_enhanced, 
-                use_prototype_reference=self.label_feature_enhanced,
-            )
-            query_embeds = query_embeds@M
-            prototypes = prototypes@M
-            if self.use_normalize:
-                query_embeds = F.normalize(query_embeds, p=2, dim=-1)
-                prototypes = F.normalize(prototypes, p=2, dim=-1)
-        else:
-            if self.label_feature_enhanced:
-                prompt_embeds = F.normalize(prompt_embeds, p=2, dim=-1) if self.use_normalize else prompt_embeds
-                prototypes = F.normalize(prototypes + prompt_embeds, p=2, dim=-1) if self.use_normalize else 0.5*(prototypes+prompt_embeds)
-            elif self.label_score_enhanced:
-                prompt_embeds = F.normalize(prompt_embeds, p=2, dim=-1) if self.use_normalize else prompt_embeds
-                prototypes = F.normalize(prototypes, p=2, dim=-1) if self.use_normalize else prototypes
-            else:
-                prototypes = F.normalize(prototypes, p=2, dim=-1) if self.use_normalize else prototypes
-
-        logits = list()
-        for query_embed in query_embeds:
-            assert self.dist_func in ['euclidean', 'dot-product']
-            if self.dist_func=='euclidean':
-                logit = - torch.sqrt(torch.sum((query_embed.unsqueeze(0)-prototypes)**2, dim=-1).unsqueeze(0))
-            else:
-                logit = F.normalize(query_embed.unsqueeze(0), p=2, dim=-1)@F.normalize(prototypes, p=2, dim=-1).T
-            logits.append(logit)
-        logits = torch.cat(logits, dim=0)
-        if self.label_score_enhanced:
-            logits = (logits+query_embeds@prompt_embeds.T)/2
-        logits /= self.config.temperature
-        
-        if self.crf_strategy=='crf':
-            loss = self.loss_crf(logits, query_labels, start_list_list)
-        elif self.crf_strategy=='crf-pa':
-            start_score, end_score, trans_score = self.crf.get_transition_score(prototypes)
-            self.crf.set_transitions(start_score, end_score, trans_score)
-            loss = self.loss_crf(logits, query_labels, start_list_list)
-        else:
-            loss = F.cross_entropy(logits, query_labels, reduction="mean")
-        return loss, logits
 
     
     def compute_prompt_embeddings(

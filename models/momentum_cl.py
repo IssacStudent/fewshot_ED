@@ -18,7 +18,6 @@ class EventQueue:
         self.args = args
         self.ptr_tenured = 0
         self.dim = dim
-        self.eval_batch_size = args.eval_batch_size
         self.queue_size = queue_size
 
         self.tenured_features, self.tenured_dataloader = processor.generate_tenure_features(sent_features)
@@ -37,16 +36,6 @@ class EventQueue:
     @property
     def label_ids(self):
         return torch.cat([self.tenured_label_ids, self.non_tenured_label_ids])
-
-    @property
-    def queue_prototypes(self):
-        prototypes = torch.zeros((self.args.num_labels, self.dim), requires_grad=True).to(self.args.device).float()
-        for id in range(self.args.num_labels):
-            label_idx = self.label_ids[self.label_ids==id]
-            if len(label_idx)>0:
-                prototypes[id, :] = torch.mean(self.embeds[:, label_idx], dim=-1)
-        return F.normalize(prototypes, p=2, dim=-1) if (self.args.use_normalize and self.args.dist_func!='KL') \
-            else prototypes
 
 
     @torch.no_grad()
@@ -210,7 +199,7 @@ class Momentum_CL(nn.Module):
             self._momentum_update_key_encoder()  # update the key encoder
             self.event_queue.update_tenured_queue(self.encoder_k)
             self.event_queue.update_nontenured_queue(
-                model=self.encoder_k,
+                model=self.encoder_q,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 label_ids=label_ids,
@@ -224,31 +213,6 @@ class Momentum_CL(nn.Module):
             query_embeds = query_embeds[label_ids.bool()]
         else:
             numerator_matrix, denominator_matrix = get_label_mask(label_ids, self.event_queue.label_ids)
-        
-        if self.args.use_tapnet:
-            prompt_input_ids, prompt_attention_mask, prompt_start_list, prompt_end_list = self.event_queue.prompt_info
-            if self.args.use_normalize and self.args.dist_func!='KL':
-                prompt_embeds = F.normalize(
-                    self.encoder_q.compute_prompt_embeddings(prompt_input_ids, prompt_attention_mask, prompt_start_list, prompt_end_list),
-                    p=2, dim=-1
-                )
-            else:
-                prompt_embeds = self.encoder_q.compute_prompt_embeddings(prompt_input_ids, prompt_attention_mask, prompt_start_list, prompt_end_list)
-            prototypes = self.event_queue.queue_prototypes
-            M = self.encoder_q.tapnet(
-                prototypes, 
-                use_normalize=self.args.use_normalize, 
-                prompt_embeds=prompt_embeds, 
-                label_feature_enhanced=self.args.label_feature_enhanced, 
-                use_prototype_reference=self.args.label_feature_enhanced
-            )
-            if self.args.use_normalize and self.args.dist_func!='KL':
-                query_embeds = F.normalize(query_embeds@M, p=2, dim=-1)
-                key_embeds = F.normalize(key_embeds.T@M, p=2, dim=-1).T.detach()  
-            else:
-                query_embeds = query_embeds@M
-                key_embeds = (key_embeds.T@M).T.detach()
-            key_embeds.requires_grad = False
         
         if self.args.dist_func=='euclidean':
             logits = (-torch.sum((query_embeds.unsqueeze(1) - key_embeds.T.unsqueeze(0))**2, dim=-1))/self.args.temperature

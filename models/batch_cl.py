@@ -47,25 +47,6 @@ class Batch_CL(nn.Module):
         else:
             if self.args.use_normalize:
                 feature_embeds = F.normalize(feature_embeds, dim=-1)
-        
-        if self.args.use_tapnet:
-            prototypes = torch.zeros((self.args.num_labels, feature_embeds.size(-1)), requires_grad=True).to(self.args.device).float()
-            for label_id in range(self.args.num_labels):
-                feature_embeds_this_label = feature_embeds[label_ids==label_id]
-                if len(feature_embeds_this_label)>0:
-                    prototypes[label_id] = torch.mean(feature_embeds_this_label, dim=0)
-
-            prompt_input_ids, prompt_attention_mask, prompt_start_list, prompt_end_list = self.prompt_info
-            prompt_embeds = self.model.compute_prompt_embeddings(prompt_input_ids, prompt_attention_mask, prompt_start_list, prompt_end_list) if self.args.label_feature_enhanced else None
-            M = self.model.tapnet(
-                prototypes, 
-                use_normalize=self.args.use_normalize, 
-                prompt_embeds=prompt_embeds, 
-                label_feature_enhanced=self.args.label_feature_enhanced, 
-                use_prototype_reference=self.args.label_feature_enhanced,
-            )
-            if self.args.use_normalize:
-                feature_embeds = F.normalize(feature_embeds@M, p=2, dim=-1)
 
         numerator_matrix, denominator_matrix = self.generate_label_mask(label_ids)
         if self.args.dist_func=="KL":

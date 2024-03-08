@@ -1,7 +1,5 @@
 import os
 
-import wandb
-
 os.environ['MKL_SERVICE_FORCE_INTEL'] = "1"
 import json
 import argparse
@@ -16,7 +14,6 @@ from collections import OrderedDict, defaultdict
 from transformers import RobertaConfig, RobertaTokenizerFast
 from torch.cuda.amp import autocast, GradScaler
 from transformers import AdamW, get_linear_schedule_with_warmup
-from sklearn.metrics import classification_report
 
 from processor.processor import EventDetectionProcessor
 from models.model import EventDetectionModel
@@ -24,7 +21,6 @@ from models.momentum_cl import Momentum_CL
 from models.batch_cl import Batch_CL
 from utils import read_json, set_seed, show_results, construct_prompt, compute_embeddings, cut_pred_res, \
     get_interval_res, eval_score_seq_label
-from crf.crf_inference import get_abstract_transitions, ViterbiDecoder
 
 logger = logging.getLogger(__name__)
 
@@ -74,16 +70,6 @@ def train(args, model, processor):
     else:
         model_cl = Momentum_CL(args, model, queue_size=args.queue_size)
         model_cl.set_queue_and_iter(train_features, processor)
-
-    viterbi_decoder, crf_model = None, None
-    if args.crf_strategy == 'crf-inference':
-        abstract_transitions = get_abstract_transitions(train_examples)
-        viterbi_decoder = ViterbiDecoder(n_tag=args.num_labels + 1, abstract_transitions=abstract_transitions,
-                                         tau=args.crf_tau, device=args.device)
-    elif args.crf_strategy == 'crf' or args.crf_strategy == 'crf-pa':
-        crf_model = model.crf
-    else:
-        pass
 
     while global_step <= args.max_steps:
         step += 1
@@ -183,32 +169,21 @@ def train(args, model, processor):
 
         if (global_step % args.eval_steps == 0) and (
                 step + 1) % args.gradient_accumulation_steps == 0 and global_step != 0:
-            dev_micro_recall, dev_micro_precision, dev_micro_f1_knn, dev_gt_list, dev_pred_list, dev_knn_logits = \
-                evaluate_knn(args, model, dev_features, train_features, processor, set_type="dev")
-            if args.crf_strategy != 'no-crf':
-                dev_micro_recall, dev_micro_precision, dev_micro_f1_crf, dev_gt_list, dev_pred_list = \
-                    evaluate_crf(args, dev_knn_logits, dev_features, set_type="dev", viterbi_decoder=viterbi_decoder,
-                                 crf_model=crf_model)
+            dev_micro_recall, dev_micro_precision, dev_micro_f1_knn, dev_gt_list, dev_pred_list, tok_embeds, dev_knn_logits = \
+                evaluate(args, model, dev_dataloader, prompt_info, set_type="dev")
 
             # wandb.log({"dev_micro_recall": dev_micro_recall})
             # wandb.log({"dev_micro_precision": dev_micro_precision})
             # wandb.log({"dev_micro_f1_knn": dev_micro_f1_knn})
 
-            test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, test_knn_logits = \
-                evaluate_knn(args, model, test_features, train_features, processor, set_type="test")
-            if args.crf_strategy != 'no-crf':
-                test_micro_recall, test_micro_precision, test_micro_f1_crf, test_gt_list, test_pred_list = \
-                    evaluate_crf(args, test_knn_logits, test_features, set_type="test", viterbi_decoder=viterbi_decoder,
-                                 crf_model=crf_model)
+            test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, tok_embeds, test_knn_logits = \
+                evaluate(args, model, test_dataloader, prompt_info, set_type="test")
 
             # wandb.log({"test_micro_recall": test_micro_recall})
             # wandb.log({"test_micro_precision": test_micro_precision})
             # wandb.log({"test_micro_f1_knn": test_micro_f1_knn})
 
-            if args.crf_strategy != 'no-crf':
-                (dev_micro_f1, test_micro_f1) = (dev_micro_f1_crf, test_micro_f1_crf)
-            else:
-                (dev_micro_f1, test_micro_f1) = (dev_micro_f1_knn, test_micro_f1_knn)
+            (dev_micro_f1, test_micro_f1) = (dev_micro_f1_knn, test_micro_f1_knn)
 
             eval_flag = (global_step > args.start_eval_steps) if (args.start_eval_steps < args.max_steps) else (
                     global_step > args.max_steps // 2)
@@ -246,7 +221,7 @@ def train(args, model, processor):
     tb_writer.close()
 
 
-def evaluate(args, model, processor, features, dataloader, prompt_info, set_type):
+def evaluate(args, model, dataloader, prompt_info, set_type):
     model.eval()
 
     gt_list, pred_list = list(), list()
@@ -347,129 +322,23 @@ def evaluate_knn(args, model, features, train_features, processor, set_type):
     return micro_recall, micro_precision, micro_f1, gt_list, pred_list, logits_nearest
 
 
-def evaluate_crf(args, logits_knn, features, set_type, viterbi_decoder=None, crf_model=None):
-    start_list_list = [feature.start_list for feature in features if feature is not None]
-    gt_res_list = list()
-    for feature in features:
-        if feature is None:
-            continue
-        gt_res_list.append(feature.label_list)
-    gt_list = [get_interval_res(gt_res, start_list) for gt_res, start_list in zip(gt_res_list, start_list_list)]
-
-    pred_res_list = list()
-    start_list_list = [feature.start_list for feature in features if feature is not None]
-    if args.crf_strategy == 'crf-inference':
-        assert (viterbi_decoder is not None)
-        logits_per_sent = cut_pred_res(logits_knn, gt_res_list)
-        for logit in logits_per_sent:
-            sent_len, n_label = logit.size()
-            sent_probs = F.softmax(logit, dim=1)
-            start_probs = torch.zeros(sent_len).to(args.device) + 1e-6
-            sent_probs = torch.cat((start_probs.view(sent_len, 1), sent_probs), 1)
-            feats = viterbi_decoder.forward(torch.log(sent_probs).view(1, sent_len, n_label + 1))
-            vit_labels = viterbi_decoder.viterbi(feats)
-            vit_labels = vit_labels.view(sent_len).detach().cpu().numpy()
-            pred_res = vit_labels - 1  # SUBSTITUE THE START_ID
-            pred_res_list.append(pred_res)
-    elif args.crf_strategy == 'crf' or args.crf_strategy == 'crf-pa':
-        assert (crf_model is not None)
-        bs, sent_len = len(start_list_list), max([len(start_list) for start_list in start_list_list])
-        attention_mask = torch.zeros((sent_len, bs)).to(logits_knn.device).float()
-        for idx, start_list in enumerate(start_list_list):
-            attention_mask[:len(start_list), idx] = 1.0
-
-        flatten_emissions = torch.log(F.softmax(logits_knn, dim=-1))
-        emissions = torch.zeros((attention_mask.size(0), attention_mask.size(1), logits_knn.size(-1))).to(
-            logits_knn.device) - 100.0
-        for idx, emission in enumerate(cut_pred_res(flatten_emissions, gt_res_list)):
-            emissions[:len(emission), idx, :] = emission
-        pred_res_list = crf_model.decode(emissions, mask=attention_mask.bool())
-    else:
-        pass
-    pred_list = [get_interval_res(pred_res, start_list) for pred_res, start_list in zip(pred_res_list, start_list_list)]
-    micro_recall, micro_precision, micro_f1, gt_num, pred_num, correct_num = eval_score_seq_label(gt_list, pred_list)
-    logger.info(
-        "({}) Ensemble(CRF)\t\tmicro-P:{}\tmicro-R:{}\tmicro-F:{}\tPred num:{}\tGt num:{}\tCorrect num:{}".format(
-            set_type, micro_precision, micro_recall, micro_f1, pred_num, gt_num, correct_num
-        ))
-
-    return micro_recall, micro_precision, micro_f1, gt_list, pred_list
-
-
 def inference(args, model, processor, output_name=None):
-    def flatten_res(gt_list, pred_list):
-        flatten_gt_list, flatten_pred_list = list(), list()
-        for gt, pred in zip(gt_list, pred_list):
-            all_res = dict()
-            for start, end, label in gt:
-                if (start, end) not in all_res:
-                    all_res[(start, end)] = {"gt": 0, "pred": 0}
-                all_res[(start, end)]["gt"] = int(label)
-            for start, end, label in pred:
-                if (start, end) not in all_res:
-                    all_res[(start, end)] = {"gt": 0, "pred": 0}
-                all_res[(start, end)]["pred"] = int(label)
-
-            for (start, end), res in all_res.items():
-                flatten_gt_list.append(res["gt"])
-                flatten_pred_list.append(res["pred"])
-        return flatten_gt_list, flatten_pred_list
-
-    viterbi_decoder, crf_model = None, None
-    if args.crf_strategy == 'crf-inference':
-        train_examples, _, _ = processor.generate_sent_dataloader('train')
-        abstract_transitions = get_abstract_transitions(train_examples)
-        viterbi_decoder = ViterbiDecoder(n_tag=args.num_labels + 1, abstract_transitions=abstract_transitions,
-                                         tau=args.crf_tau, device=args.device)
-    elif args.crf_strategy == 'crf' or args.crf_strategy == 'crf-pa':
-        crf_model = model.crf
-    else:
-        pass
-
     label_dict = {v: k for k, v in processor.label_dict.items()}
     res_report = defaultdict(OrderedDict)
     prompt_info = construct_prompt(processor.label_dict, processor.tokenizer) if args.use_label_semantics else None
-    _, train_features, _ = processor.generate_sent_dataloader('train')
-    _, dev_features, _ = processor.generate_sent_dataloader('dev')
-    _, test_features, _ = processor.generate_sent_dataloader('test')
+    train_examples, train_features, train_dataloader = processor.generate_sent_dataloader('train')
+    dev_examples, dev_features, dev_dataloader = processor.generate_sent_dataloader('dev')
+    test_examples, test_features, test_dataloader = processor.generate_sent_dataloader('test')
 
-    dev_micro_recall, dev_micro_precision, dev_micro_f1_knn, dev_gt_list, dev_pred_list, dev_knn_logits = \
-        evaluate_knn(args, model, dev_features, train_features, processor, set_type="dev")
-    if args.crf_strategy != 'no-crf':
-        dev_micro_recall, dev_micro_precision, dev_micro_f1_crf, dev_gt_list, dev_pred_list = \
-            evaluate_crf(args, dev_knn_logits, dev_features, set_type="dev", viterbi_decoder=viterbi_decoder,
-                         crf_model=crf_model)
-        dev_gt_list, dev_pred_list = flatten_res(dev_gt_list, dev_pred_list)
-        dev_knn_report = classification_report(y_true=dev_gt_list, y_pred=dev_pred_list,
-                                               labels=list(range(1, args.num_labels)), zero_division=0,
-                                               output_dict=True)
-        for label_id, res in dev_knn_report.items():
-            try:
-                event_type = label_dict[int(label_id)]
-                res_report[event_type]['dev_knn'] = res
-            except:
-                res_report['overall']['dev_knn'] = res
+    dev_micro_recall, dev_micro_precision, dev_micro_f1_knn, dev_gt_list, dev_pred_list, tok_embeds, dev_knn_logits = \
+        evaluate(args, model, dev_dataloader, prompt_info, set_type="dev")
 
     # wandb.log({"final_dev_micro_recall": dev_micro_recall})
     # wandb.log({"final_dev_micro_precision": dev_micro_precision})
     # wandb.log({"final_dev_micro_f1_knn": dev_micro_f1_knn})
 
-    test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, test_knn_logits = \
-        evaluate_knn(args, model, test_features, train_features, processor, set_type="test")
-    if args.crf_strategy != 'no-crf':
-        test_micro_recall, test_micro_precision, test_micro_f1_crf, test_gt_list, test_pred_list = \
-            evaluate_crf(args, test_knn_logits, test_features, set_type="test", viterbi_decoder=viterbi_decoder,
-                         crf_model=crf_model)
-        test_gt_list, test_pred_list = flatten_res(test_gt_list, test_pred_list)
-        test_knn_report = classification_report(y_true=test_gt_list, y_pred=test_pred_list,
-                                                labels=list(range(1, args.num_labels)), zero_division=0,
-                                                output_dict=True)
-        for label_id, res in test_knn_report.items():
-            try:
-                event_type = label_dict[int(label_id)]
-                res_report[event_type]['test_knn'] = res
-            except:
-                res_report['overall']['test_knn'] = res
+    test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, tok_embeds, test_knn_logits = \
+        evaluate(args, model, test_dataloader, prompt_info, set_type="test")
 
     # wandb.log({"final_test_micro_recall": test_micro_recall})
     # wandb.log({"final_test_micro_precision": test_micro_precision})

@@ -1,5 +1,7 @@
 import os
 
+import wandb
+
 os.environ['MKL_SERVICE_FORCE_INTEL'] = "1"
 import json
 import argparse
@@ -94,12 +96,12 @@ def train(args, model, processor):
             with autocast():
                 outputs = model(**inputs)
                 ce_loss, tok_embeds, ce_logits = outputs[0], outputs[2], outputs[4]
-                # wandb.log({"ce_loss": ce_loss.item()})
+                wandb.log({"ce_loss": ce_loss.item()})
         else:
             outputs = model(**inputs)
             ce_loss, tok_embeds, ce_logits = outputs[0], outputs[2], outputs[4]
         smooth_ce_loss += ce_loss.item() / args.logging_steps
-        # wandb.log({"smooth_ce_loss": smooth_ce_loss})
+        wandb.log({"smooth_ce_loss": smooth_ce_loss})
 
         cl_loss = torch.tensor([0.0], dtype=torch.float).to(args.device)
         if args.use_in_batch_cl:
@@ -120,25 +122,25 @@ def train(args, model, processor):
                 with autocast():
                     cl_outputs = model_cl(**inputs)
                     cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
-                    # wandb.log({"cl_loss": cl_loss.item()})
+                    wandb.log({"cl_loss": cl_loss.item()})
             else:
                 cl_outputs = model_cl(**inputs)
                 cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
             smooth_cl_loss += cl_loss.item() / args.logging_steps
-            # wandb.log({"smooth_cl_loss": smooth_cl_loss})
+            wandb.log({"smooth_cl_loss": smooth_cl_loss})
 
         if args.fp_16:
             with autocast():
                 loss = ce_loss + cl_loss
                 loss = loss / args.gradient_accumulation_steps
-                # wandb.log({"loss": loss.item()})
+                wandb.log({"loss": loss.item()})
                 scaler.scale(loss).backward()
         else:
             loss = ce_loss + cl_loss
             loss = loss / args.gradient_accumulation_steps
             loss.backward()
         smooth_loss += loss.item() / args.logging_steps
-        # wandb.log({"smooth_loss": smooth_loss})
+        wandb.log({"smooth_loss": smooth_loss})
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             if args.fp_16:
@@ -172,16 +174,16 @@ def train(args, model, processor):
             dev_micro_recall, dev_micro_precision, dev_micro_f1_knn, dev_gt_list, dev_pred_list, tok_embeds, dev_knn_logits = \
                 evaluate(args, model, dev_dataloader, prompt_info, set_type="dev")
 
-            # wandb.log({"dev_micro_recall": dev_micro_recall})
-            # wandb.log({"dev_micro_precision": dev_micro_precision})
-            # wandb.log({"dev_micro_f1_knn": dev_micro_f1_knn})
+            wandb.log({"dev_micro_recall": dev_micro_recall})
+            wandb.log({"dev_micro_precision": dev_micro_precision})
+            wandb.log({"dev_micro_f1_knn": dev_micro_f1_knn})
 
             test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, tok_embeds, test_knn_logits = \
                 evaluate(args, model, test_dataloader, prompt_info, set_type="test")
 
-            # wandb.log({"test_micro_recall": test_micro_recall})
-            # wandb.log({"test_micro_precision": test_micro_precision})
-            # wandb.log({"test_micro_f1_knn": test_micro_f1_knn})
+            wandb.log({"test_micro_recall": test_micro_recall})
+            wandb.log({"test_micro_precision": test_micro_precision})
+            wandb.log({"test_micro_f1_knn": test_micro_f1_knn})
 
             (dev_micro_f1, test_micro_f1) = (dev_micro_f1_knn, test_micro_f1_knn)
 
@@ -215,15 +217,15 @@ def train(args, model, processor):
         "dev_f1": best_f1_dev,
         "test_f1": related_f1_test,
     }
-    # wandb.log(res_record)
+    wandb.log(res_record)
     with open(os.path.join(args.output_dir, "res.json"), 'w') as f:
         json.dump(res_record, f)
     tb_writer.close()
 
 
+# 朴素的验证方法
 def evaluate(args, model, dataloader, prompt_info, set_type):
     model.eval()
-
     gt_list, pred_list = list(), list()
     tok_embeds, logits = list(), list()
     with torch.no_grad():
@@ -261,6 +263,7 @@ def evaluate(args, model, dataloader, prompt_info, set_type):
     return micro_recall, micro_precision, micro_f1, gt_list, pred_list, tok_embeds, logits
 
 
+# knn验证方法
 def evaluate_knn(args, model, features, train_features, processor, set_type):
     model.eval()
     train_embeddings = compute_embeddings(model, train_features, processor, args, verbose=False)
@@ -286,9 +289,6 @@ def evaluate_knn(args, model, features, train_features, processor, set_type):
     with torch.no_grad():
         train_embeddings = torch.tensor(train_embeddings[None, :, :]).float().to(args.device)
         embeddings = embeddings[:, None, :].clone().detach().float().to(args.device)
-        if args.use_tapnet:
-            train_embeddings = F.normalize(train_embeddings @ model.tapnet.M, p=2, dim=-1)
-            embeddings = F.normalize(embeddings @ model.tapnet.M, p=2, dim=-1)
 
         for start in range(0, embeddings.size(0), args.buffer_size):
             sub_embeddings = embeddings[start:(start + args.buffer_size)]
@@ -333,16 +333,16 @@ def inference(args, model, processor, output_name=None):
     dev_micro_recall, dev_micro_precision, dev_micro_f1_knn, dev_gt_list, dev_pred_list, tok_embeds, dev_knn_logits = \
         evaluate(args, model, dev_dataloader, prompt_info, set_type="dev")
 
-    # wandb.log({"final_dev_micro_recall": dev_micro_recall})
-    # wandb.log({"final_dev_micro_precision": dev_micro_precision})
-    # wandb.log({"final_dev_micro_f1_knn": dev_micro_f1_knn})
+    wandb.log({"final_dev_micro_recall": dev_micro_recall})
+    wandb.log({"final_dev_micro_precision": dev_micro_precision})
+    wandb.log({"final_dev_micro_f1_knn": dev_micro_f1_knn})
 
     test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, tok_embeds, test_knn_logits = \
         evaluate(args, model, test_dataloader, prompt_info, set_type="test")
 
-    # wandb.log({"final_test_micro_recall": test_micro_recall})
-    # wandb.log({"final_test_micro_precision": test_micro_precision})
-    # wandb.log({"final_test_micro_f1_knn": test_micro_f1_knn})
+    wandb.log({"final_test_micro_recall": test_micro_recall})
+    wandb.log({"final_test_micro_precision": test_micro_precision})
+    wandb.log({"final_test_micro_f1_knn": test_micro_f1_knn})
 
     train_trigger_dict = processor.generate_trigger_dict(train_features, set_type="train", count=True)
     dev_trigger_dict = processor.generate_trigger_dict(dev_features, set_type="dev", count=True)
@@ -413,9 +413,21 @@ def main():
     parser.add_argument('--use_normalize', action='store_true', default=False)
     parser.add_argument('--drop_none_event', action='store_true', default=False)
     parser.add_argument("--fp_16", default=False, action="store_true")
+    parser.add_argument("--wandb", default="", type=str)
+    parser.add_argument("--wandbname", default="", type=str)
     args = parser.parse_args()
     args.num_labels = len(read_json(args.label_dict_path))
     set_seed(args)
+
+    os.environ['LC_ALL'] = 'C.UTF-8'
+    os.environ['LANG'] = 'C.UTF-8'
+    wandb.init(
+    # set the wandb project where this run will be logged
+    # 名称为2shot加上时间，格式为yyyyMMddHHmm
+        project=args.wandb,
+        name=args.wandbname
+    )
+    wandb.config.update(args)
 
     if args.inference:
         ckpt_dir = os.path.join(args.output_dir, 'checkpoint')
@@ -466,15 +478,8 @@ def main():
         config = config_class.from_pretrained(ckpt_dir, proxies=proxies)
         model = model_class.from_pretrained(ckpt_dir, config=config, proxies=proxies).to(args.device)
     inference(args, model, processor)
+    wandb.finish()
 
 
 if __name__ == "__main__":
-    # os.environ['LC_ALL'] = 'C.UTF-8'
-    # os.environ['LANG'] = 'C.UTF-8'
-    # wandb.init(
-        # set the wandb project where this run will be logged
-        # 名称为2shot加上时间，格式为yyyyMMddHHmm
-        # project="maven_10shot_t4"
-    # )
     main()
-    # wandb.finish()

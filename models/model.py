@@ -1,13 +1,9 @@
 import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import RobertaModel, RobertaPreTrainedModel
-
-from torchcrf import CRF
-from crf.pa_crf import PA_CRF
-from models.tapnet import TapNet
-from utils import cut_pred_res
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +29,7 @@ class EventDetectionModel(RobertaPreTrainedModel):
                 self.fc_layer.weight.data = F.normalize(self.fc_layer.weight.data, p=2, dim=-1)
         else:
             self.fc_layer = None
-        if self.crf_strategy == 'crf':
-            self.crf = CRF(self.num_labels)
-        elif self.crf_strategy == 'crf-pa':
-            self.crf = PA_CRF(self.num_labels, self.hidden_size)
-        else:
-            pass
         self.loss_fn = nn.CrossEntropyLoss()
-
-        if self.config.use_tapnet:
-            self.tapnet = TapNet(self.hidden_size, self.num_labels)
 
 
     def forward(
@@ -93,16 +80,7 @@ class EventDetectionModel(RobertaPreTrainedModel):
             
             logits /= self.temperature
             if label_ids is not None:
-                if self.crf_strategy=='crf':
-                    total_loss = self.loss_crf(logits, label_ids, start_list_list)
-                elif self.crf_strategy=='crf-pa':
-                    if prototypes is None:
-                        prototypes = prompt_embeds
-                    start_score, end_score, trans_score = self.crf.get_transition_score(prototypes)
-                    self.crf.set_transitions(start_score, end_score, trans_score)
-                    total_loss = self.loss_crf(logits, label_ids, start_list_list)
-                else:
-                    total_loss = self.loss_fn(logits, label_ids)
+                total_loss = self.loss_fn(logits, label_ids)
             else:
                 if output_prob:
                     pred_probs = F.softmax(logits, dim=-1)
@@ -127,22 +105,3 @@ class EventDetectionModel(RobertaPreTrainedModel):
             prompt_embeds.append(embed)
         prompt_embeds = torch.cat(prompt_embeds, dim=0)
         return prompt_embeds
-
-    
-    def loss_crf(self, logits, label_ids, start_list_list):
-        bs, sent_len = len(start_list_list), max([len(start_list) for start_list in start_list_list])
-        attention_mask = torch.zeros((sent_len, bs)).to(logits.device).float()
-        for idx, start_list in enumerate(start_list_list):
-            attention_mask[:len(start_list), idx] = 1.0
-
-        flatten_emissions = torch.log(F.softmax(logits, dim=-1))
-        emissions = torch.zeros((attention_mask.size(0), attention_mask.size(1), logits.size(-1))).to(logits.device) - 100.0
-        for idx, emission in enumerate(cut_pred_res(flatten_emissions, start_list_list)):
-            emissions[:len(emission), idx, :] = emission
-
-        tags = torch.zeros_like(attention_mask).long()
-        for idx, label_id in enumerate(cut_pred_res(label_ids, start_list_list)):
-            tags[:len(label_id), idx] = label_id
-        
-        loss = -self.crf(emissions, tags, mask=attention_mask.bool(), reduction='token_mean')
-        return loss

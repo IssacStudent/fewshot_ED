@@ -151,12 +151,24 @@ def train(args, model, processor):
                 loss = ce_loss + cl_loss
                 loss = loss / args.gradient_accumulation_steps
                 wandb.log({"loss": loss.item()})
-                scaler.scale(loss).backward()
+                scaler.scale(loss).backward(retain_graph=True)
         else:
             loss = ce_loss + cl_loss
             loss = loss / args.gradient_accumulation_steps
             loss.backward()
         smooth_loss += loss.item() / args.logging_steps
+
+        inputs = {
+            'input_ids': ce_batch[0].to(args.device),
+            'attention_mask': ce_batch[1].to(args.device),
+            'label_ids': torch.cat(ce_batch[5]).to(args.device),
+            'start_list_list': [start_list.to(args.device) for start_list in ce_batch[3]],
+            'end_list_list': [end_list.to(args.device) for end_list in ce_batch[4]],
+            'prompt_input_ids': prompt_info[0].to(args.device) if args.use_label_semantics else None,
+            'prompt_attention_mask': prompt_info[1].to(args.device) if args.use_label_semantics else None,
+            'prompt_start_list': prompt_info[2] if args.use_label_semantics else None,
+            'prompt_end_list': prompt_info[3] if args.use_label_semantics else None,
+        }
 
         # 对抗训练
         if args.adv == 'fgsm':
@@ -211,6 +223,21 @@ def train(args, model, processor):
         else:
             loss_adv_ce = ce_loss
 
+        if args.use_in_batch_cl:
+            inputs = {
+                'label_ids': torch.cat(ce_batch[5]).to(args.device),
+                'feature_embeds': tok_embeds,
+            }
+        else:
+            inputs = {
+                'input_ids': ce_batch[0].to(args.device),
+                'attention_mask': ce_batch[1].to(args.device),
+                'label_ids': torch.cat(ce_batch[5]).to(args.device),
+                'start_list_list': [start_list.to(args.device) for start_list in ce_batch[3]],
+                'end_list_list': [end_list.to(args.device) for end_list in ce_batch[4]],
+                'query_embeds': tok_embeds,
+            }
+
         # 对抗训练
         if args.cl_adv == 'fgsm':
             fgsm_cl.attack()
@@ -264,6 +291,7 @@ def train(args, model, processor):
         else:
             loss_adv_cl = cl_loss
         loss_adv = loss_adv_ce + loss_adv_cl
+        loss_adv = loss_adv / args.gradient_accumulation_steps
 
         wandb.log({"loss_adv_ce": loss_adv_ce.item()})
         wandb.log({"loss_adv_cl": loss_adv_cl.item()})

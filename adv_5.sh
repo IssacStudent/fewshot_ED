@@ -1,6 +1,6 @@
 #!/bin/bash
 
-K_values=(2 5)
+K_values=(5)
 adv_values=("no" "fgsm" "pgd" "FreeAT" "fgm")
 cl_adv_values=("no" "fgsm" "pgd" "FreeAT" "fgm")
 
@@ -35,7 +35,7 @@ for K in "${K_values[@]}"; do
               --max_seq_length 192 \
               --fp_16 \
               --drop_none_event \
-              --device cuda:1 \
+              --device cuda:0 \
               --wandb fewED_${K}shot_t4_adv \
               --wandbname ${adv}_${cl_adv} \
               --dist_func euclidean \

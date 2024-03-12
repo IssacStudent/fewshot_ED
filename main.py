@@ -136,15 +136,15 @@ def train(args, model, processor):
                 'end_list_list': [end_list.to(args.device) for end_list in ce_batch[4]],
                 'query_embeds': tok_embeds,
             }
-            if args.fp_16:
-                with autocast():
-                    cl_outputs = model_cl(**inputs)
-                    cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
-                    wandb.log({"cl_loss": cl_loss.item()})
-            else:
+        if args.fp_16:
+            with autocast():
                 cl_outputs = model_cl(**inputs)
                 cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
-            smooth_cl_loss += cl_loss.item() / args.logging_steps
+                wandb.log({"cl_loss": cl_loss.item()})
+        else:
+            cl_outputs = model_cl(**inputs)
+            cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
+        smooth_cl_loss += cl_loss.item() / args.logging_steps
 
         if args.fp_16:
             with autocast():

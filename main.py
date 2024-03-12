@@ -1,6 +1,7 @@
 import os
 
 import wandb
+from models.fgm import FGSM, PGD, FreeAT, FGM
 
 os.environ['MKL_SERVICE_FORCE_INTEL'] = "1"
 import json
@@ -73,6 +74,24 @@ def train(args, model, processor):
         model_cl = Momentum_CL(args, model, queue_size=args.queue_size)
         model_cl.set_queue_and_iter(train_features, processor)
 
+    if args.adv == 'fgsm':
+        fgsm = FGSM(model=model)
+    elif args.adv == 'pgd':
+        pgd = PGD(model=model)
+    elif args.adv == 'FreeAT':
+        free_at = FreeAT(model=model)
+    elif args.adv == 'fgm':
+        fgm = FGM(model=model)
+
+    if args.cl_adv == 'fgsm':
+        fgsm_cl = FGSM(model=model_cl)
+    elif args.cl_adv == 'pgd':
+        pgd_cl = PGD(model=model_cl)
+    elif args.cl_adv == 'FreeAT':
+        free_at_cl = FreeAT(model=model_cl)
+    elif args.cl_adv == 'fgm':
+        fgm_cl = FGM(model=model_cl)
+
     while global_step <= args.max_steps:
         step += 1
         model.train()
@@ -101,7 +120,6 @@ def train(args, model, processor):
             outputs = model(**inputs)
             ce_loss, tok_embeds, ce_logits = outputs[0], outputs[2], outputs[4]
         smooth_ce_loss += ce_loss.item() / args.logging_steps
-        wandb.log({"smooth_ce_loss": smooth_ce_loss})
 
         cl_loss = torch.tensor([0.0], dtype=torch.float).to(args.device)
         if args.use_in_batch_cl:
@@ -127,7 +145,6 @@ def train(args, model, processor):
                 cl_outputs = model_cl(**inputs)
                 cl_loss, cl_logits = cl_outputs[0], cl_outputs[1]
             smooth_cl_loss += cl_loss.item() / args.logging_steps
-            wandb.log({"smooth_cl_loss": smooth_cl_loss})
 
         if args.fp_16:
             with autocast():
@@ -140,7 +157,118 @@ def train(args, model, processor):
             loss = loss / args.gradient_accumulation_steps
             loss.backward()
         smooth_loss += loss.item() / args.logging_steps
-        wandb.log({"smooth_loss": smooth_loss})
+
+        # 对抗训练
+        if args.adv == 'fgsm':
+            fgsm.attack()
+            loss_adv_ce = model(**inputs)[0]
+            if args.gradient_accumulation_steps > 1:
+                loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
+            loss_adv_ce.backward()
+            fgsm.restore()
+
+        elif args.adv == 'pgd':
+            pgd_k = 3
+            pgd.backup_grad()
+            for _t in range(pgd_k):
+                pgd.attack(is_first_attack=(_t == 0))
+
+                if _t != pgd_k - 1:
+                    model.zero_grad()
+                else:
+                    pgd.restore_grad()
+                loss_adv_ce = model(**inputs)[0]
+                if args.gradient_accumulation_steps > 1:
+                    loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
+                loss_adv_ce.backward()
+            pgd.restore()
+
+        elif args.adv == 'FreeAT':
+            m = 5
+            free_at.backup_grad()
+            for _t in range(m):
+                free_at.attack(is_first_attack=(_t == 0))
+
+                if _t != m - 1:
+                    model.zero_grad()
+                else:
+                    free_at.restore_grad()
+
+                loss_adv_ce = model(**inputs)[0]
+                if args.gradient_accumulation_steps > 1:
+                    loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
+                loss_adv_ce.backward()
+            free_at.restore()
+
+        elif args.adv == 'fgm':
+            fgm.attack()
+            loss_adv_ce = model(**inputs)[0]
+            if args.gradient_accumulation_steps > 1:
+                loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
+            loss_adv_ce.backward()
+            fgm.restore()
+
+        else:
+            loss_adv_ce = ce_loss
+
+        # 对抗训练
+        if args.cl_adv == 'fgsm':
+            fgsm_cl.attack()
+            loss_adv_cl = model_cl(**inputs)[0]
+            if args.gradient_accumulation_steps > 1:
+                loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
+            loss_adv_cl.backward()
+            fgsm_cl.restore()
+
+        elif args.cl_adv == 'pgd':
+            pgd_k = 3
+            pgd_cl.backup_grad()
+            for _t in range(pgd_k):
+                pgd_cl.attack(is_first_attack=(_t == 0))
+
+                if _t != pgd_k - 1:
+                    model_cl.zero_grad()
+                else:
+                    pgd_cl.restore_grad()
+                loss_adv_cl = model_cl(**inputs)[0]
+                if args.gradient_accumulation_steps > 1:
+                    loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
+                loss_adv_cl.backward()
+            pgd_cl.restore()
+
+        elif args.cl_adv == 'FreeAT':
+            m = 5
+            free_at_cl.backup_grad()
+            for _t in range(m):
+                free_at_cl.attack(is_first_attack=(_t == 0))
+
+                if _t != m - 1:
+                    model_cl.zero_grad()
+                else:
+                    free_at_cl.restore_grad()
+
+                loss_adv_cl = model_cl(**inputs)[0]
+                if args.gradient_accumulation_steps > 1:
+                    loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
+                loss_adv_cl.backward()
+            free_at_cl.restore()
+
+        elif args.cl_adv == 'fgm':
+            fgm_cl.attack()
+            loss_adv_cl = model_cl(**inputs)[0]
+            if args.gradient_accumulation_steps > 1:
+                loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
+            loss_adv_cl.backward()
+            fgm_cl.restore()
+
+        else:
+            loss_adv_cl = cl_loss
+        loss_adv = loss_adv_ce + loss_adv_cl
+
+        wandb.log({"loss_adv_ce": loss_adv_ce.item()})
+        wandb.log({"loss_adv_cl": loss_adv_cl.item()})
+        wandb.log({"loss_adv": loss_adv.item()})
+
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             if args.fp_16:
@@ -415,6 +543,10 @@ def main():
     parser.add_argument("--fp_16", default=False, action="store_true")
     parser.add_argument("--wandb", default="", type=str)
     parser.add_argument("--wandbname", default="", type=str)
+    parser.add_argument("--adv", default="", type=str)
+    parser.add_argument("--cl_adv", default="", type=str)
+    parser.add_argument("--model_adv", default=False, action="store_true")
+    parser.add_argument("--model_cl_adv", default=False, action="store_true")
     args = parser.parse_args()
     args.num_labels = len(read_json(args.label_dict_path))
     set_seed(args)

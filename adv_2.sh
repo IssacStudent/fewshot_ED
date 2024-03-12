@@ -1,8 +1,8 @@
 #!/bin/bash
 
 K_values=(2)
-adv_values=("no" "fgsm" "pgd" "FreeAT" "fgm")
-cl_adv_values=("no" "fgsm" "pgd" "FreeAT" "fgm")
+adv_values=("fgsm" "pgd" "FreeAT" "fgm" "no")
+cl_adv_values=("fgsm" "pgd" "FreeAT" "fgm" "no")
 
 for K in "${K_values[@]}"; do
     for adv in "${adv_values[@]}"; do
@@ -24,13 +24,14 @@ for K in "${K_values[@]}"; do
               --label_dict_path $LABEL_DICT_PATH \
               --max_steps 200 \
               --batch_size 8 \
+              --eval_batch_size 8 \
               --logging_steps 10 \
               --eval_steps 10 \
               --use_label_semantics \
               --use_normalize \
               --learning_rate 1e-4 \
               --dataset_type MAVEN \
-              --queue_size 8192 \
+              --queue_size 2048 \
               --start_eval_steps 50 \
               --max_seq_length 192 \
               --fp_16 \

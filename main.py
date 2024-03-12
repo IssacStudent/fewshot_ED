@@ -155,7 +155,7 @@ def train(args, model, processor):
         else:
             loss = ce_loss + cl_loss
             loss = loss / args.gradient_accumulation_steps
-            loss.backward()
+            loss.backward(retain_graph=True)
         smooth_loss += loss.item() / args.logging_steps
 
         inputs = {
@@ -176,7 +176,7 @@ def train(args, model, processor):
             loss_adv_ce = model(**inputs)[0]
             if args.gradient_accumulation_steps > 1:
                 loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
-            loss_adv_ce.backward()
+            loss_adv_ce.backward(retain_graph=True)
             fgsm.restore()
 
         elif args.adv == 'pgd':
@@ -192,7 +192,7 @@ def train(args, model, processor):
                 loss_adv_ce = model(**inputs)[0]
                 if args.gradient_accumulation_steps > 1:
                     loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
-                loss_adv_ce.backward()
+                loss_adv_ce.backward(retain_graph=True)
             pgd.restore()
 
         elif args.adv == 'FreeAT':
@@ -209,7 +209,7 @@ def train(args, model, processor):
                 loss_adv_ce = model(**inputs)[0]
                 if args.gradient_accumulation_steps > 1:
                     loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
-                loss_adv_ce.backward()
+                loss_adv_ce.backward(retain_graph=True)
             free_at.restore()
 
         elif args.adv == 'fgm':
@@ -217,7 +217,7 @@ def train(args, model, processor):
             loss_adv_ce = model(**inputs)[0]
             if args.gradient_accumulation_steps > 1:
                 loss_adv_ce = loss_adv_ce / args.gradient_accumulation_steps
-            loss_adv_ce.backward()
+            loss_adv_ce.backward(retain_graph=True)
             fgm.restore()
 
         else:
@@ -244,7 +244,7 @@ def train(args, model, processor):
             loss_adv_cl = model_cl(**inputs)[0]
             if args.gradient_accumulation_steps > 1:
                 loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
-            loss_adv_cl.backward()
+            loss_adv_cl.backward(retain_graph=True)
             fgsm_cl.restore()
 
         elif args.cl_adv == 'pgd':
@@ -260,7 +260,7 @@ def train(args, model, processor):
                 loss_adv_cl = model_cl(**inputs)[0]
                 if args.gradient_accumulation_steps > 1:
                     loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
-                loss_adv_cl.backward()
+                loss_adv_cl.backward(retain_graph=True)
             pgd_cl.restore()
 
         elif args.cl_adv == 'FreeAT':
@@ -277,7 +277,7 @@ def train(args, model, processor):
                 loss_adv_cl = model_cl(**inputs)[0]
                 if args.gradient_accumulation_steps > 1:
                     loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
-                loss_adv_cl.backward()
+                loss_adv_cl.backward(retain_graph=True)
             free_at_cl.restore()
 
         elif args.cl_adv == 'fgm':
@@ -285,7 +285,7 @@ def train(args, model, processor):
             loss_adv_cl = model_cl(**inputs)[0]
             if args.gradient_accumulation_steps > 1:
                 loss_adv_cl = loss_adv_cl / args.gradient_accumulation_steps
-            loss_adv_cl.backward()
+            loss_adv_cl.backward(retain_graph=True)
             fgm_cl.restore()
 
         else:

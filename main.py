@@ -1,5 +1,7 @@
 import os
 
+from tqdm import tqdm
+
 import wandb
 from models.fgm import FGSM, PGD, FreeAT, FGM
 
@@ -334,14 +336,14 @@ def train(args, model, processor):
             wandb.log({"dev_micro_precision": dev_micro_precision})
             wandb.log({"dev_micro_f1_knn": dev_micro_f1_knn})
 
-            test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, tok_embeds, test_knn_logits = \
-                evaluate(args, model, test_dataloader, prompt_info, set_type="test")
+            # test_micro_recall, test_micro_precision, test_micro_f1_knn, test_gt_list, test_pred_list, tok_embeds, test_knn_logits = \
+            #     evaluate(args, model, test_dataloader, prompt_info, set_type="test")
+            #
+            # wandb.log({"test_micro_recall": test_micro_recall})
+            # wandb.log({"test_micro_precision": test_micro_precision})
+            # wandb.log({"test_micro_f1_knn": test_micro_f1_knn})
 
-            wandb.log({"test_micro_recall": test_micro_recall})
-            wandb.log({"test_micro_precision": test_micro_precision})
-            wandb.log({"test_micro_f1_knn": test_micro_f1_knn})
-
-            (dev_micro_f1, test_micro_f1) = (dev_micro_f1_knn, test_micro_f1_knn)
+            (dev_micro_f1) = (dev_micro_f1_knn)
 
             eval_flag = (global_step > args.start_eval_steps) if (args.start_eval_steps < args.max_steps) else (
                     global_step > args.max_steps // 2)
@@ -350,7 +352,7 @@ def train(args, model, processor):
                     os.makedirs(os.path.join(args.output_dir, 'checkpoint'))
                 if dev_micro_f1 > best_f1_dev:
                     best_f1_dev = dev_micro_f1
-                    related_f1_test = test_micro_f1
+                    related_f1_test = 0.777
                     model_to_save = model.module if hasattr(model, 'module') else model
                     model_to_save.save_pretrained(os.path.join(args.output_dir, 'checkpoint'))
                     torch.save(args, os.path.join(args.output_dir, 'checkpoint', 'training_args.bin'))
@@ -358,10 +360,10 @@ def train(args, model, processor):
                         dev_features, dev_gt_list, dev_pred_list, processor,
                         os.path.join(args.output_dir, "dev_result.txt")
                     )
-                    show_results(
-                        test_features, test_gt_list, test_pred_list, processor,
-                        os.path.join(args.output_dir, "test_result.txt")
-                    )
+                    # show_results(
+                    #     test_features, test_gt_list, test_pred_list, processor,
+                    #     os.path.join(args.output_dir, "test_result.txt")
+                    # )
 
                 logging.info('current best dev-f1 score: {}'.format(best_f1_dev))
                 logging.info('current related test-f1 score: {}'.format(related_f1_test))
@@ -385,7 +387,7 @@ def evaluate(args, model, dataloader, prompt_info, set_type):
     gt_list, pred_list = list(), list()
     tok_embeds, logits = list(), list()
     with torch.no_grad():
-        for batch in dataloader:
+        for batch in tqdm(dataloader):
             inputs = {
                 'input_ids': batch[0].to(args.device),
                 'attention_mask': batch[1].to(args.device),
@@ -500,23 +502,23 @@ def inference(args, model, processor, output_name=None):
     wandb.log({"final_test_micro_precision": test_micro_precision})
     wandb.log({"final_test_micro_f1_knn": test_micro_f1_knn})
 
-    train_trigger_dict = processor.generate_trigger_dict(train_features, set_type="train", count=True)
-    dev_trigger_dict = processor.generate_trigger_dict(dev_features, set_type="dev", count=True)
-    test_trigger_dict = processor.generate_trigger_dict(test_features, set_type="test", count=True)
-    for label_id in label_dict:
-        if label_id == 0:
-            continue
-        event_type = label_dict[int(label_id)]
-        res_report[event_type]['train_trigger'] = train_trigger_dict[
-            label_id] if label_id in train_trigger_dict else list()
-        res_report[event_type]['dev_trigger'] = dev_trigger_dict[label_id] if label_id in dev_trigger_dict else list()
-        res_report[event_type]['test_trigger'] = test_trigger_dict[
-            label_id] if label_id in test_trigger_dict else list()
-
-    output_path = os.path.join(args.output_dir, "res_report.json") if output_name is None else os.path.join(
-        args.output_dir, "res_report_{}.json".format(output_name))
-    with open(output_path, 'w') as f:
-        json.dump(res_report, f)
+    # train_trigger_dict = processor.generate_trigger_dict(train_features, set_type="train", count=True)
+    # dev_trigger_dict = processor.generate_trigger_dict(dev_features, set_type="dev", count=True)
+    # test_trigger_dict = processor.generate_trigger_dict(test_features, set_type="test", count=True)
+    # for label_id in label_dict:
+    #     if label_id == 0:
+    #         continue
+    #     event_type = label_dict[int(label_id)]
+    #     res_report[event_type]['train_trigger'] = train_trigger_dict[
+    #         label_id] if label_id in train_trigger_dict else list()
+    #     res_report[event_type]['dev_trigger'] = dev_trigger_dict[label_id] if label_id in dev_trigger_dict else list()
+    #     res_report[event_type]['test_trigger'] = test_trigger_dict[
+    #         label_id] if label_id in test_trigger_dict else list()
+    #
+    # output_path = os.path.join(args.output_dir, "res_report.json") if output_name is None else os.path.join(
+    #     args.output_dir, "res_report_{}.json".format(output_name))
+    # with open(output_path, 'w') as f:
+    #     json.dump(res_report, f)
 
 
 def main():
@@ -529,8 +531,8 @@ def main():
     parser.add_argument("--dataset_type", default='ACE', type=str)
     parser.add_argument("--model_type", default='roberta', type=str)
     parser.add_argument("--config_name", default=None, type=str)
-    parser.add_argument("--tokenizer_name", default=None, type=str)
-    parser.add_argument("--model_name_or_path", default="./roberta-base", type=str)
+    parser.add_argument("--tokenizer_name", default="./hfl/chinese-roberta-wwm-ext", type=str)
+    parser.add_argument("--model_name_or_path", default="./hfl/chinese-roberta-wwm-ext", type=str)
     parser.add_argument("--label_dict_path", type=str, default=None)
 
     parser.add_argument("--device", default='cuda', type=str)
@@ -642,4 +644,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+     main()

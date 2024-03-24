@@ -157,6 +157,11 @@ class SentFeatures:
         return enc_input_ids, enc_mask_ids, word_to_token_index
 
 
+def all_integers(lst):
+    """检查列表中的所有元素是否都是整数。"""
+    return all(isinstance(item, int) for item in lst)
+
+
 class SentDataset(Dataset):
     def __init__(self, features):
         self.features = features
@@ -166,9 +171,15 @@ class SentDataset(Dataset):
     
     def __getitem__(self, idx):
         return self.features[idx]
- 
+
+
+
     @staticmethod
     def collate_fn(batch):
+        batch = [f for f in batch if f is not None and all_integers(f.enc_input_ids) and all_integers(
+            f.enc_mask_ids) and all_integers(f.start_list) and all_integers(
+            f.end_list) and all_integers(f.label_list) and all_integers(f.feature_idx_list)]
+
         enc_input_ids = torch.tensor([f.enc_input_ids for f in batch if f is not None], dtype=torch.long)
         enc_mask_ids = torch.tensor([f.enc_mask_ids for f in batch if f is not None], dtype=torch.long)
         sent_idx = torch.tensor([f.sent_idx for f in batch if f is not None], dtype=torch.long)

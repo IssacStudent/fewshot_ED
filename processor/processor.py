@@ -66,6 +66,48 @@ class EventDetectionProcessor:
         return examples
 
 
+    def create_examples_leven(self, lines, set_type):
+        sent_dict = {}
+        examples = []
+        for line in tqdm(lines):
+            text_list = [content["tokens"] for content in line["content"]]
+            for event in line["events"]:
+                event_type = event["type"]
+                trigger = {
+                    "text": event["mention"][0]["trigger_word"],
+                    "start": event["mention"][0]["offset"][0],
+                    "end": event["mention"][0]["offset"][1],
+                    "label_id": self.label_dict[event_type],
+                }
+                sent = text_list[event["mention"][0]["sent_id"]]
+                if " ".join(sent) not in sent_dict:
+                    sent_dict[" ".join(sent)] = len(sent_dict)
+                    if set_type=="train" and " ".join(sent) not in self.train_labeled_sent:
+                        self.train_labeled_sent.append(" ".join(sent))
+
+                examples.append(
+                    Event(sent_dict[" ".join(sent)], sent, event_type, trigger)
+                )
+
+            for negative in line["negative_triggers"]:
+                event_type = "None"
+                trigger = {
+                    "text": negative["trigger_word"],
+                    "start": negative["offset"][0],
+                    "end": negative["offset"][1],
+                    "label_id": self.label_dict[event_type],
+                }
+                sent = text_list[negative["sent_id"]]
+                if " ".join(sent) not in sent_dict:
+                    sent_dict[" ".join(sent)] = len(sent_dict)
+                    if set_type=="train" and " ".join(sent) not in self.train_labeled_sent:
+                        self.train_labeled_sent.append(" ".join(sent))
+                examples.append(
+                    Event(sent_dict[" ".join(sent)], sent, event_type, trigger)
+                )
+        return examples
+
+
     def create_examples_ere(self, lines, set_type):
         sent_dict = {}
         positive_idx_dict = defaultdict(list)
@@ -154,6 +196,8 @@ class EventDetectionProcessor:
             event_examples = self.create_examples_maven(lines, set_type) 
         elif self.args.dataset_type=='ERE':
             event_examples = self.create_examples_ere(lines, set_type)
+        elif self.args.dataset_type=='LEVEN':
+            event_examples = self.create_examples_leven(lines, set_type)
         else:
             event_examples = self.create_examples_ace(lines, set_type)
 

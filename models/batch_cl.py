@@ -69,7 +69,10 @@ class Batch_CL(nn.Module):
 
         Z = torch.sum(logits*denominator_matrix, dim=-1)
         loss = -torch.mean(
-            torch.sum(torch.log(logits/Z[:, None])*numerator_matrix, dim=-1)/torch.sum(numerator_matrix, dim=-1), dim=-1
+            torch.sum(torch.log(logits/Z[:, None])*numerator_matrix, dim=-1)
+            /
+            torch.sum(numerator_matrix, dim=-1)
+        , dim=-1
         )
         return loss, None
         

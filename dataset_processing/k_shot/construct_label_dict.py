@@ -17,6 +17,20 @@ def get_maven_label_dict():
         json.dump(label_dict, f)
 
 
+def get_leven_label_dict():
+    file_input_path, file_output_path = "../LEVEN/train.jsonl", "./label_dict_LEVEN.json"
+    label_dict = {"None": 0}
+
+    with jsonlines.open(file_input_path) as reader:
+        for line in reader:
+            for event in line["events"]:
+                event_type, type_id = event["type"], event["type_id"]
+                label_dict[event_type] = type_id
+
+    with open(file_output_path, 'w', encoding='utf-8') as f:
+        json.dump(label_dict, f)
+
+
 def get_ace_label_dict():
     file_input_path, file_output_path = "../ACE05_processed/train.json", "./label_dict_ACE.json"
     label_dict = {"None": 0}
@@ -48,7 +62,7 @@ def get_ere_label_dict():
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_type", default="ACE", type=str, choices=[
-        'ACE', 'MAVEN', 'ERE'
+        'ACE', 'MAVEN', 'ERE', 'LEVEN'
     ])
     args = parser.parse_args()
     
@@ -58,5 +72,7 @@ if __name__=="__main__":
         get_maven_label_dict()
     elif args.dataset_type=="ERE":
         get_ere_label_dict()
+    elif args.dataset_type=="LEVEN":
+        get_leven_label_dict()
     else:
         raise AssertionError()

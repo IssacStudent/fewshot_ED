@@ -106,7 +106,7 @@ def data_vis(examples, parse=True):
         proxies = {'http': 'http://127.0.0.1:7890', 'https': 'http://127.0.0.1:7890'}
         # stanza.download('en', proxies=proxies)
         device = torch.device("cuda:1")
-        nlp = stanza.Pipeline(device = device, proxies = proxies, lang='en', processors='tokenize,mwt,pos,lemma', tokenize_pretokenized=True, tokenize_no_ssplit=True)
+        nlp = stanza.Pipeline(device = device, proxies = proxies, lang='zh', processors='tokenize,pos,lemma', tokenize_pretokenized=True, tokenize_no_ssplit=True)
 
     if isinstance(examples, dict):
         output_examples = defaultdict(list)
@@ -118,7 +118,8 @@ def data_vis(examples, parse=True):
                     'event_list': [event for event in event.event_list if event['label_id']!=0]
                 }
                 if parse:
-                    parse_sent(output_event['sent'], output_event['event_list'], nlp)
+                    pass
+                    # parse_sent(output_event['sent'], output_event['event_list'], nlp)
                 output_examples[event_type].append(output_event)
     else:
         output_examples = list()
@@ -129,7 +130,8 @@ def data_vis(examples, parse=True):
                 'event_list': [event for event in event.event_list if event['label_id']!=0]
             }
             if parse:
-                parse_sent(output_event['sent'], output_event['event_list'], nlp)
+                pass
+                # parse_sent(output_event['sent'], output_event['event_list'], nlp)
             output_examples.append(output_event)
 
     return output_examples
@@ -151,9 +153,9 @@ def data_split_and_save(filtered_examples, output_path, set_type=None):
                 last_type = event["event_type"]
 
     pickle.dump(filtered_examples, open(os.path.join(output_path, "{}.pkl".format(set_type)), "wb"))
-    with open(os.path.join(output_path, "{}.json".format(set_type)), 'w') as f:
+    with open(os.path.join(output_path, "{}.json".format(set_type)), 'w', encoding='utf-8') as f:
         json.dump(data_vis(filtered_examples), f)
-    with open(os.path.join(output_path, "{}_cnt.json".format(set_type)), 'w') as f:
+    with open(os.path.join(output_path, "{}_cnt.json".format(set_type)), 'w', encoding='utf-8') as f:
         json.dump(train_cnt, f)
 
 
@@ -168,7 +170,7 @@ def generate_lemma_counter(examples):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_type", default="ACE", type=str, choices=['ACE', 'MAVEN', 'ERE'])
+    parser.add_argument("--dataset_type", default="ACE", type=str, choices=['ACE', 'MAVEN', 'ERE', 'LEVEN'])
     parser.add_argument("--train_K", default=5, type=int)
     parser.add_argument("--dev_K", default=2, type=int)
     config = parser.parse_args()
@@ -181,6 +183,10 @@ if __name__ == "__main__":
         file_path = "../MAVEN/train.jsonl"
         file_test_path = "../MAVEN/valid.jsonl"
         args = edict(label_dict_path="./label_dict_MAVEN.json", dataset_type="MAVEN")
+    elif config.dataset_type=='LEVEN':
+        file_path = "../LEVEN/train.jsonl"
+        file_test_path = "../LEVEN/valid.jsonl"
+        args = edict(label_dict_path="./label_dict_LEVEN.json", dataset_type="LEVEN")
     elif config.dataset_type=='ERE':
         file_path = "../ERE/train.jsonl"
         file_test_path = "../ERE/test.jsonl"
@@ -188,7 +194,7 @@ if __name__ == "__main__":
     else:
         raise AssertionError() 
 
-    seed_list = [13, 21, 42, 88, 100, 18, 26, 47, 93, 105]
+    seed_list = [13]
     for i, seed in enumerate(seed_list):
         args.seed = seed
         output_path = "./fewshot_set/K{}_{}_{}".format(config.train_K, config.dataset_type, i)
